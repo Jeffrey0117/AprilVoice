@@ -384,18 +384,30 @@ class GeminiSpeechService(ASRService):
             if text in empty_responses:
                 return TranscriptionResult(text="", is_final=True, confidence=0.0)
 
-            # 過濾常見幻覺文字
+            # 過濾常見幻覺文字（繁體+簡體）
             hallucinations = [
+                # 繁體
                 "請訂閱", "訂閱", "感謝收看", "感謝觀看", "謝謝收看", "謝謝觀看",
-                "下一集", "敬請期待", "記得按讚", "喜歡的話",
-                "please subscribe", "thank you for watching", "like and subscribe",
+                "下一集", "敬請期待", "記得按讚", "喜歡的話", "點讚",
                 "字幕", "繁體中文", "簡體中文", "翻譯",
+                # 簡體幻覺
+                "请订阅", "订阅", "感谢收看", "感谢观看", "谢谢收看", "谢谢观看",
+                "点赞", "不吝点赞", "打赏", "打赏支持", "明镜", "点点栏目",
+                "请不吝", "支持明镜", "们白痴",
+                # 英文
+                "please subscribe", "thank you for watching", "like and subscribe",
             ]
-            text_lower = text.lower()
             for h in hallucinations:
-                if h.lower() in text_lower:
+                if h in text:
                     logger.warning(f"Filtered hallucination: '{text}'")
                     return TranscriptionResult(text="", is_final=True, confidence=0.0)
+
+            # 偵測簡體字（常見簡體字元）
+            simplified_chars = "请订阅谢观赞们这个来说为会对"
+            simplified_count = sum(1 for c in text if c in simplified_chars)
+            if simplified_count >= 2:
+                logger.warning(f"Filtered simplified Chinese: '{text}'")
+                return TranscriptionResult(text="", is_final=True, confidence=0.0)
 
             logger.info(f"Gemini transcription: '{text}'")
             return TranscriptionResult(text=text, is_final=True, confidence=0.9)
