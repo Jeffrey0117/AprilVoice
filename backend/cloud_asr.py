@@ -285,6 +285,116 @@ class GoogleSpeechService(ASRService):
         logger.info("Google Speech reset")
 
 
+class GeminiSpeechService(ASRService):
+    """
+    Google Gemini API 語音轉文字
+    直接用 API Key，不用搞服務帳戶那堆鬼東西
+    免費額度: 15 RPM, 1M tokens/day
+    """
+
+    def __init__(self, account_pool: Optional[AccountPool] = None):
+        self.account_pool = account_pool or AccountPool()
+        self._initialized = False
+
+    def add_account(self, name: str, api_key: str, monthly_limit: float = 0):
+        """新增 Gemini 帳號 (API Key 以 AIza 開頭)"""
+        self.account_pool.add_account(AccountCredentials(
+            name=name,
+            api_key=api_key,
+            monthly_limit=monthly_limit,
+        ))
+
+    async def initialize(self) -> None:
+        if self._initialized:
+            return
+
+        try:
+            import google.generativeai as genai
+            self._genai = genai
+            self._initialized = True
+            logger.info(f"Gemini Speech initialized with {len(self.account_pool.accounts)} accounts")
+        except ImportError:
+            logger.error("Missing google-generativeai package. Run: pip install google-generativeai")
+            raise
+
+    async def transcribe(self, audio_data: bytes) -> TranscriptionResult:
+        if not self._initialized:
+            await self.initialize()
+
+        account = self.account_pool.get_current_account()
+        if not account:
+            logger.error("No available Gemini accounts")
+            return TranscriptionResult(text="", is_final=True, confidence=0.0)
+
+        try:
+            # 設定 API Key
+            self._genai.configure(api_key=account.api_key)
+
+            # 解碼音訊為 PCM
+            pcm_data = decode_audio(audio_data)
+
+            # 轉成 WAV 格式（Gemini 需要）
+            import struct
+            wav_buffer = bytearray()
+            wav_buffer.extend(b'RIFF')
+            wav_buffer.extend(struct.pack('<I', 36 + len(pcm_data)))
+            wav_buffer.extend(b'WAVE')
+            wav_buffer.extend(b'fmt ')
+            wav_buffer.extend(struct.pack('<I', 16))
+            wav_buffer.extend(struct.pack('<H', 1))   # PCM
+            wav_buffer.extend(struct.pack('<H', 1))   # mono
+            wav_buffer.extend(struct.pack('<I', 16000))  # sample rate
+            wav_buffer.extend(struct.pack('<I', 32000))  # byte rate
+            wav_buffer.extend(struct.pack('<H', 2))   # block align
+            wav_buffer.extend(struct.pack('<H', 16))  # bits per sample
+            wav_buffer.extend(b'data')
+            wav_buffer.extend(struct.pack('<I', len(pcm_data)))
+            wav_buffer.extend(pcm_data)
+
+            # 使用 Gemini 2.0 Flash（支援音訊）
+            model = self._genai.GenerativeModel('gemini-2.0-flash-exp')
+
+            # 上傳音訊
+            audio_file = self._genai.upload_file(
+                data=bytes(wav_buffer),
+                mime_type="audio/wav"
+            )
+
+            # 請求轉錄
+            response = model.generate_content([
+                "你是專業的語音轉文字系統。請將這段音訊精確轉錄成繁體中文。"
+                "規則：1.只輸出轉錄文字 2.使用台灣繁體中文 3.不要加標點符號 4.不要解釋 5.聽不清就回覆空白",
+                audio_file
+            ])
+
+            # 記錄用量
+            duration_minutes = len(pcm_data) / 32000 / 60
+            self.account_pool.record_usage(duration_minutes)
+
+            # 清理上傳的檔案
+            try:
+                audio_file.delete()
+            except:
+                pass
+
+            text = response.text.strip()
+
+            # 過濾空白回應
+            if text in ["", "空白", "無", "（無）", "(無)", "聽不清楚", "沒有語音"]:
+                return TranscriptionResult(text="", is_final=True, confidence=0.0)
+
+            logger.info(f"Gemini transcription: '{text}'")
+            return TranscriptionResult(text=text, is_final=True, confidence=0.9)
+
+        except Exception as e:
+            logger.error(f"Gemini transcription error: {e}")
+            self.account_pool.rotate_account()
+            return TranscriptionResult(text="", is_final=True, confidence=0.0)
+
+    async def reset(self) -> None:
+        logger.info("Gemini Speech reset")
+
+
 class OpenAIWhisperService(ASRService):
     """
     OpenAI Whisper API Service
@@ -499,5 +609,17 @@ def load_cloud_config(config_path: str = "cloud_asr_config.json") -> MultiProvid
             )
         if openai_service.account_pool.accounts:
             multi_service.add_provider("openai", openai_service, priority=3)
+
+    # 載入 Gemini 帳號（最簡單，只要 API Key）
+    if "gemini" in config:
+        gemini_service = GeminiSpeechService()
+        for acc in config["gemini"].get("accounts", []):
+            gemini_service.add_account(
+                name=acc["name"],
+                api_key=acc["api_key"],
+                monthly_limit=acc.get("monthly_limit", 0),
+            )
+        if gemini_service.account_pool.accounts:
+            multi_service.add_provider("gemini", gemini_service, priority=0)  # 最高優先
 
     return multi_service

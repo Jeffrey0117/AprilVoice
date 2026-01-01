@@ -152,6 +152,51 @@ async def cloud_status():
         }
 
 
+# 儲存兩種服務實例
+_local_asr: Optional[ASRService] = None
+_cloud_asr: Optional[ASRService] = None
+_current_mode: str = "local"
+
+
+@app.get("/asr/mode")
+async def get_asr_mode():
+    """取得目前 ASR 模式"""
+    return {"mode": _current_mode}
+
+
+@app.post("/asr/mode/{mode}")
+async def set_asr_mode(mode: str):
+    """切換 ASR 模式: local 或 cloud"""
+    global asr_service, _local_asr, _cloud_asr, _current_mode
+
+    if mode not in ["local", "cloud"]:
+        return {"error": "Invalid mode. Use 'local' or 'cloud'"}
+
+    if mode == "cloud":
+        if _cloud_asr is None:
+            _cloud_asr = create_cloud_asr_service()
+            if _cloud_asr:
+                await _cloud_asr.initialize()
+
+        if _cloud_asr is None:
+            return {"error": "Cloud ASR not available. Check cloud_asr_config.json"}
+
+        asr_service = _cloud_asr
+        _current_mode = "cloud"
+        logger.info("Switched to cloud ASR")
+
+    else:  # local
+        if _local_asr is None:
+            _local_asr = create_asr_service(use_mock=False)
+            await _local_asr.initialize()
+
+        asr_service = _local_asr
+        _current_mode = "local"
+        logger.info("Switched to local ASR")
+
+    return {"mode": _current_mode, "success": True}
+
+
 class ConnectionManager:
     def __init__(self):
         self.active_connections: list[WebSocket] = []

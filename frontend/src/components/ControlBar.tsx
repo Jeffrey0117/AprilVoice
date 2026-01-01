@@ -1,3 +1,4 @@
+import { useState, useEffect } from 'react';
 import { MicrophoneButton } from './MicrophoneButton';
 
 interface ControlBarProps {
@@ -17,8 +18,50 @@ export function ControlBar({
   volumeLevel = 0,
   isConnected = false,
 }: ControlBarProps) {
+  const [asrMode, setAsrMode] = useState<'local' | 'cloud'>('local');
+  const [isLoading, setIsLoading] = useState(false);
+
+  // 載入目前模式
+  useEffect(() => {
+    fetch('http://localhost:8000/asr/mode')
+      .then(res => res.json())
+      .then(data => setAsrMode(data.mode))
+      .catch(() => {});
+  }, []);
+
+  const toggleMode = async () => {
+    const newMode = asrMode === 'local' ? 'cloud' : 'local';
+    setIsLoading(true);
+    try {
+      const res = await fetch(`http://localhost:8000/asr/mode/${newMode}`, { method: 'POST' });
+      const data = await res.json();
+      if (data.success) {
+        setAsrMode(newMode);
+      } else {
+        alert(data.error || 'Failed to switch mode');
+      }
+    } catch (e) {
+      alert('Failed to connect to server');
+    }
+    setIsLoading(false);
+  };
+
   return (
-    <div className="bg-gray-700 py-4 px-6 flex items-center justify-center gap-6 border-t border-gray-600">
+    <div className="bg-gray-700 py-4 px-6 flex items-center justify-center gap-4 border-t border-gray-600">
+      {/* ASR Mode Toggle */}
+      <button
+        onClick={toggleMode}
+        disabled={isLoading || isRecording}
+        className={`px-3 py-2 rounded-lg text-sm font-medium transition-colors ${
+          asrMode === 'cloud'
+            ? 'bg-blue-600 hover:bg-blue-500 text-white'
+            : 'bg-gray-600 hover:bg-gray-500 text-gray-200'
+        } ${(isLoading || isRecording) ? 'opacity-50 cursor-not-allowed' : ''}`}
+        title={asrMode === 'cloud' ? 'Using Gemini API' : 'Using local Whisper'}
+      >
+        {isLoading ? '...' : asrMode === 'cloud' ? 'Cloud' : 'Local'}
+      </button>
+
       <button
         onClick={onClearClick}
         className="w-14 h-14 rounded-full bg-gray-600 hover:bg-gray-500 flex items-center justify-center transition-colors focus:outline-none focus:ring-2 focus:ring-gray-400"

@@ -2,6 +2,18 @@
   "_comment": "AprilVoice Cloud ASR Configuration - Multi-Account Free Tier Exploitation",
   "_instructions": "Copy this file to cloud_asr_config.json and fill in your API keys",
 
+  "gemini": {
+    "_info": "Gemini: 最簡單！只要 API Key，免費 15 RPM",
+    "_signup": "https://aistudio.google.com/app/apikey",
+    "accounts": [
+      {
+        "name": "gemini-main",
+        "api_key": "AIzaSy...",
+        "monthly_limit": 0
+      }
+    ]
+  },
+
   "azure": {
     "_info": "Azure Speech: 5hr/month free + $200 new user credit",
     "_signup": "https://portal.azure.com - Create Speech Service resource",
