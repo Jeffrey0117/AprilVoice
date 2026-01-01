@@ -379,9 +379,23 @@ class GeminiSpeechService(ASRService):
 
             text = response.text.strip()
 
-            # 過濾空白回應
-            if text in ["", "空白", "無", "（無）", "(無)", "聽不清楚", "沒有語音"]:
+            # 過濾空白回應和幻覺
+            empty_responses = ["", "空白", "無", "（無）", "(無)", "聽不清楚", "沒有語音", "無法辨識", "..."]
+            if text in empty_responses:
                 return TranscriptionResult(text="", is_final=True, confidence=0.0)
+
+            # 過濾常見幻覺文字
+            hallucinations = [
+                "請訂閱", "訂閱", "感謝收看", "感謝觀看", "謝謝收看", "謝謝觀看",
+                "下一集", "敬請期待", "記得按讚", "喜歡的話",
+                "please subscribe", "thank you for watching", "like and subscribe",
+                "字幕", "繁體中文", "簡體中文", "翻譯",
+            ]
+            text_lower = text.lower()
+            for h in hallucinations:
+                if h.lower() in text_lower:
+                    logger.warning(f"Filtered hallucination: '{text}'")
+                    return TranscriptionResult(text="", is_final=True, confidence=0.0)
 
             logger.info(f"Gemini transcription: '{text}'")
             return TranscriptionResult(text=text, is_final=True, confidence=0.9)
