@@ -16,6 +16,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
 from asr_service import create_asr_service, ASRService
+from cloud_asr import load_cloud_config, MultiProviderASRService
 
 logging.basicConfig(
     level=logging.INFO,
@@ -27,18 +28,54 @@ asr_service: Optional[ASRService] = None
 executor = ThreadPoolExecutor(max_workers=2)
 
 
+def create_cloud_asr_service() -> Optional[ASRService]:
+    """嘗試從配置檔案載入雲端 ASR 服務"""
+    config_path = os.getenv("CLOUD_ASR_CONFIG", "cloud_asr_config.json")
+
+    if not os.path.exists(config_path):
+        logger.info(f"Cloud ASR config not found: {config_path}")
+        return None
+
+    try:
+        service = load_cloud_config(config_path)
+        if service.providers:
+            logger.info(f"Loaded cloud ASR with providers: {list(service.providers.keys())}")
+            return service
+        else:
+            logger.warning("Cloud ASR config loaded but no providers configured")
+            return None
+    except Exception as e:
+        logger.error(f"Failed to load cloud ASR config: {e}")
+        return None
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     global asr_service
     logger.info("Starting AprilVoice Backend...")
 
-    # 預設使用真正的 ASR，設定 USE_MOCK_ASR=1 才用假的
+    # ASR 模式優先順序:
+    # 1. USE_CLOUD_ASR=1 -> 使用雲端 API
+    # 2. USE_MOCK_ASR=1 -> 使用假的 ASR (開發用)
+    # 3. 預設 -> 使用本地 faster-whisper
+
+    use_cloud = os.getenv("USE_CLOUD_ASR", "0") == "1"
     use_mock = os.getenv("USE_MOCK_ASR", "0") == "1"
-    asr_service = create_asr_service(use_mock=use_mock)
+
+    if use_cloud:
+        logger.info("Cloud ASR mode enabled")
+        asr_service = create_cloud_asr_service()
+        if not asr_service:
+            logger.warning("Cloud ASR not available, falling back to local")
+            use_cloud = False
+
+    if not use_cloud:
+        asr_service = create_asr_service(use_mock=use_mock)
 
     try:
         await asr_service.initialize()
-        logger.info("ASR service initialized")
+        mode = "cloud" if use_cloud else ("mock" if use_mock else "local")
+        logger.info(f"ASR service initialized (mode: {mode})")
     except Exception as e:
         logger.error(f"Failed to initialize ASR: {e}")
         if not use_mock:
@@ -89,9 +126,30 @@ async def root():
         "version": "1.0.0",
         "endpoints": {
             "health": "/health",
-            "websocket": "/ws/transcribe"
+            "websocket": "/ws/transcribe",
+            "cloud_status": "/cloud/status"
         }
     }
+
+
+@app.get("/cloud/status")
+async def cloud_status():
+    """查看雲端 ASR 帳號使用狀態"""
+    if asr_service is None:
+        return {"error": "ASR service not initialized"}
+
+    if isinstance(asr_service, MultiProviderASRService):
+        return {
+            "mode": "cloud",
+            "providers": asr_service.get_status(),
+            "current_provider": asr_service.provider_order[asr_service.current_provider_index][1]
+            if asr_service.provider_order else None
+        }
+    else:
+        return {
+            "mode": "local",
+            "message": "Using local ASR (faster-whisper)"
+        }
 
 
 class ConnectionManager:

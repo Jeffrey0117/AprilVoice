@@ -1,0 +1,61 @@
+{
+  "_comment": "AprilVoice Cloud ASR Configuration - Multi-Account Free Tier Exploitation",
+  "_instructions": "Copy this file to cloud_asr_config.json and fill in your API keys",
+
+  "azure": {
+    "_info": "Azure Speech: 5hr/month free + $200 new user credit",
+    "_signup": "https://portal.azure.com - Create Speech Service resource",
+    "accounts": [
+      {
+        "name": "azure-main",
+        "api_key": "YOUR_AZURE_SPEECH_API_KEY",
+        "region": "eastasia",
+        "monthly_limit": 300
+      },
+      {
+        "name": "azure-backup",
+        "api_key": "YOUR_SECOND_AZURE_API_KEY",
+        "region": "southeastasia",
+        "monthly_limit": 300
+      }
+    ]
+  },
+
+  "google": {
+    "_info": "Google Cloud Speech: 60min/month free + $300 new user credit",
+    "_signup": "https://console.cloud.google.com - Enable Speech-to-Text API",
+    "accounts": [
+      {
+        "name": "google-main",
+        "credentials_json": "path/to/service-account-1.json",
+        "project_id": "your-project-id-1",
+        "monthly_limit": 60
+      },
+      {
+        "name": "google-backup",
+        "credentials_json": "path/to/service-account-2.json",
+        "project_id": "your-project-id-2",
+        "monthly_limit": 60
+      }
+    ]
+  },
+
+  "openai": {
+    "_info": "OpenAI Whisper: $0.006/min, new users get $5 credit (~830 min)",
+    "_signup": "https://platform.openai.com",
+    "accounts": [
+      {
+        "name": "openai-main",
+        "api_key": "sk-YOUR_OPENAI_API_KEY",
+        "monthly_limit": 0
+      }
+    ]
+  },
+
+  "settings": {
+    "provider_priority": ["azure", "google", "openai"],
+    "auto_rotate_on_error": true,
+    "save_usage_stats": true,
+    "usage_stats_file": "asr_usage_stats.json"
+  }
+}

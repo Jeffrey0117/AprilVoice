@@ -20,6 +20,11 @@ env/
 .env.local
 .env.*.local
 
+# Cloud ASR credentials (NEVER commit these!)
+cloud_asr_config.json
+**/service-account*.json
+asr_usage_stats.json
+
 # IDE
 .idea/
 .vscode/
