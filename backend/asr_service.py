@@ -109,46 +109,43 @@ class MockASRService(ASRService):
         logger.info("Mock ASR Service state reset")
 
 
-class BreezeASRService(ASRService):
+class FasterWhisperService(ASRService):
     """
-    Real ASR service using Breeze-ASR-25.
-    GitHub: https://github.com/mtkresearch/Breeze-ASR-25
+    Optimized ASR using faster-whisper with CTranslate2.
+    4x faster than standard Whisper on CPU.
     """
 
-    def __init__(self, model_name: str = "MediaTek-Research/Breeze-ASR-25"):
-        self.model_name = model_name
+    def __init__(self, model_size: str = "base"):
+        # 可選: tiny, base, small, medium, large-v3
+        # tiny: 最快但較不準確
+        # base: 平衡速度與準確度 (推薦 CPU)
+        # small: 更準確但較慢
+        self.model_size = model_size
         self._model = None
-        self._processor = None
         self._initialized = False
 
     async def initialize(self) -> None:
         if self._initialized:
             return
 
-        logger.info(f"Initializing Breeze-ASR-25: {self.model_name}")
+        logger.info(f"Initializing faster-whisper ({self.model_size})...")
 
         try:
-            import torch
-            from transformers import AutoModelForSpeechSeq2Seq, AutoProcessor
+            from faster_whisper import WhisperModel
 
-            device = "cuda" if torch.cuda.is_available() else "cpu"
-            torch_dtype = torch.float16 if torch.cuda.is_available() else torch.float32
+            # CPU 最佳化設定
+            self._model = WhisperModel(
+                self.model_size,
+                device="cpu",
+                compute_type="int8",  # int8 量化，CPU 上更快
+                cpu_threads=4,
+            )
 
-            self._processor = AutoProcessor.from_pretrained(self.model_name)
-            self._model = AutoModelForSpeechSeq2Seq.from_pretrained(
-                self.model_name,
-                torch_dtype=torch_dtype,
-                low_cpu_mem_usage=True,
-            ).to(device)
-
-            self._device = device
-            self._torch_dtype = torch_dtype
             self._initialized = True
-
-            logger.info("Breeze-ASR-25 initialized successfully")
+            logger.info(f"faster-whisper ({self.model_size}) initialized")
 
         except ImportError as e:
-            logger.error(f"Missing packages: {e}")
+            logger.error(f"Missing faster-whisper: {e}")
             raise
         except Exception as e:
             logger.error(f"Failed to initialize: {e}")
@@ -158,7 +155,6 @@ class BreezeASRService(ASRService):
         if not self._initialized:
             await self.initialize()
 
-        import torch
         import numpy as np
 
         # 解碼音訊（從 WebM 轉 PCM）
@@ -171,29 +167,36 @@ class BreezeASRService(ASRService):
         if len(audio_array) < 1600:  # 至少 0.1 秒
             return TranscriptionResult(text="", is_final=False)
 
-        inputs = self._processor(
-            audio_array, sampling_rate=16000, return_tensors="pt"
-        ).to(self._device)
+        # faster-whisper 辨識
+        segments, info = self._model.transcribe(
+            audio_array,
+            language="zh",  # 中文
+            beam_size=1,    # beam_size=1 更快
+            vad_filter=True,  # 過濾靜音
+        )
 
-        with torch.no_grad():
-            generated_ids = self._model.generate(
-                inputs.input_features, max_new_tokens=256
-            )
+        # 收集所有段落的文字
+        text_parts = []
+        for segment in segments:
+            text_parts.append(segment.text)
 
-        transcription = self._processor.batch_decode(
-            generated_ids, skip_special_tokens=True
-        )[0]
+        transcription = "".join(text_parts).strip()
 
-        return TranscriptionResult(text=transcription.strip(), is_final=True, confidence=0.9)
+        return TranscriptionResult(text=transcription, is_final=True, confidence=0.9)
 
     async def reset(self) -> None:
-        logger.info("Breeze-ASR-25 state reset")
+        logger.info("faster-whisper state reset")
 
 
-def create_asr_service(use_mock: bool = True) -> ASRService:
+def create_asr_service(use_mock: bool = False) -> ASRService:
+    """
+    創建 ASR 服務。
+    use_mock=True: 使用假的辨識服務
+    use_mock=False: 使用 faster-whisper (預設，CPU 上快 4 倍)
+    """
     if use_mock:
         logger.info("Creating Mock ASR Service")
         return MockASRService()
     else:
-        logger.info("Creating Breeze-ASR-25 Service")
-        return BreezeASRService()
+        logger.info("Creating faster-whisper Service")
+        return FasterWhisperService(model_size="base")
