@@ -167,12 +167,19 @@ class FasterWhisperService(ASRService):
         if len(audio_array) < 1600:  # 至少 0.1 秒
             return TranscriptionResult(text="", is_final=False)
 
-        # faster-whisper 辨識
+        # faster-whisper 辨識 - 優化速度
         segments, info = self._model.transcribe(
             audio_array,
             language="zh",  # 中文
-            beam_size=1,    # beam_size=1 更快
-            vad_filter=True,  # 過濾靜音
+            beam_size=1,    # 最快速度 (greedy decoding)
+            vad_filter=True,  # 開啟 VAD 過濾靜音
+            vad_parameters={
+                "min_silence_duration_ms": 300,
+                "speech_pad_ms": 50,
+                "threshold": 0.5,
+            },
+            condition_on_previous_text=False,  # 防止幻覺
+            no_speech_threshold=0.5,
         )
 
         # 收集所有段落的文字
@@ -182,6 +189,26 @@ class FasterWhisperService(ASRService):
 
         transcription = "".join(text_parts).strip()
 
+        # 記錄原始辨識結果
+        logger.info(f"Raw transcription: '{transcription}' (len={len(transcription)})")
+
+        # 如果沒有文字，直接返回
+        if not transcription:
+            return TranscriptionResult(text="", is_final=True, confidence=0.0)
+
+        # 只過濾最明顯的幻覺（暫時簡化過濾器）
+        hallucination_patterns = [
+            "MING PAO", "wordpress.com",
+            "thank you for watching", "please subscribe",
+        ]
+        lower_text = transcription.lower()
+
+        for pattern in hallucination_patterns:
+            if pattern.lower() in lower_text:
+                logger.warning(f"Filtered hallucination: '{transcription}'")
+                return TranscriptionResult(text="", is_final=True, confidence=0.0)
+
+        logger.info(f"Returning transcription: '{transcription}'")
         return TranscriptionResult(text=transcription, is_final=True, confidence=0.9)
 
     async def reset(self) -> None:
@@ -199,4 +226,9 @@ def create_asr_service(use_mock: bool = False) -> ASRService:
         return MockASRService()
     else:
         logger.info("Creating faster-whisper Service")
-        return FasterWhisperService(model_size="base")
+        # tiny: 最快 (~0.5秒) - 準確度較低
+        # base: 較快 (~1秒) - 平衡選擇
+        # small: 較準確 (~2-3秒) - 推薦 CPU
+        # medium: 更準確 (~10-15秒) - CPU 太慢
+        # large-v3: 最準確 (~20+秒) - CPU 極慢
+        return FasterWhisperService(model_size="small")

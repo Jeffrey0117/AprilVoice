@@ -132,14 +132,20 @@ async def websocket_transcribe(websocket: WebSocket):
                 lambda: asyncio.run(asr_service.transcribe(audio_chunk))
             )
             logger.info(f"Transcription result: '{result.text}' (final={result.is_final})")
+            logger.info(f"is_connected={is_connected}, text_bool={bool(result.text)}")
 
             if result.text and is_connected:
-                await websocket.send_json({
-                    "type": "transcript",
-                    "text": result.text,
-                    "is_final": result.is_final
-                })
-                logger.info(f"Sent transcript to client: {result.text}")
+                try:
+                    await websocket.send_json({
+                        "type": "transcript",
+                        "text": result.text,
+                        "is_final": result.is_final
+                    })
+                    logger.info(f"Sent transcript to client: {result.text}")
+                except Exception as send_err:
+                    logger.error(f"Failed to send: {send_err}")
+            else:
+                logger.warning(f"Skipped sending: text={bool(result.text)}, connected={is_connected}")
         except Exception as e:
             logger.error(f"Transcription error: {e}")
 
